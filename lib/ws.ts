@@ -1,4 +1,6 @@
-import { WebSocket, WebSocketServer } from 'ws'
+// ✅ Ensure we import both runtime values and types explicitly
+import WebSocket, { WebSocketServer } from 'ws'
+import type { RawData } from 'ws'
 import { verifyJWT } from './auth'
 import { env } from './env'
 
@@ -19,8 +21,7 @@ export class WebSocketManager {
 
     this.wss.on('connection', async (ws: WebSocket, req: any) => {
       try {
-        // ✅ Extract token from query string
-        const url = new URL(req.url, `http://${req.headers.host}`)
+        const url = new URL(req.url!, `http://${req.headers.host}`)
         const token = url.searchParams.get('token')
 
         if (!token) {
@@ -28,20 +29,22 @@ export class WebSocketManager {
           return
         }
 
-        // ✅ Verify JWT
         const payload = await verifyJWT(token)
         if (!payload) {
           ws.close(1008, 'Invalid authentication token')
           return
         }
 
-        // ✅ Add client to pool
         this.clients.add(ws)
         console.log(`🟢 Client connected. Total clients: ${this.clients.size}`)
 
         ws.on('close', () => {
           this.clients.delete(ws)
           console.log(`🔴 Client disconnected. Total clients: ${this.clients.size}`)
+        })
+
+        ws.on('error', (err) => {
+          console.error('WebSocket error:', err)
         })
 
       } catch (error) {
@@ -73,7 +76,7 @@ export class WebSocketManager {
   }
 }
 
-// ✅ Export a single shared instance
+// ✅ Shared singleton instance
 export const wsManager = new WebSocketManager()
 
 /**
