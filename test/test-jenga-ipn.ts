@@ -1,43 +1,124 @@
 /**
- * test-jenga-ipn.ts
- *
- * Automated Jenga IPN tester:
- * - Tests localhost:3000 first
- * - Detects if port 3000 is busy
- * - Falls back to ngrok automatically
- * - Auto-retries ngrok detection and localhost reconnect every few minutes
- * - Logs success/error messages daily in /logs/
- * - Gracefully recovers if your local API or ngrok tunnel restarts mid-run
+ * 24/7 Jenga IPN Stress Tester (Ultra-Resilient + Alerting Edition)
+ * -----------------------------------------------------------------
+ * ✅ Auto-detect localhost ports (3000–3010) → fallback to ngrok
+ * ✅ Safe log buffering + flush to disk
+ * ✅ Automatic ngrok recheck every 3 min
+ * ✅ Crash recovery, OOM detection, and restart
+ * ✅ Daily restart at midnight
+ * ✅ Optional Email + Telegram alerts on restart or crash
  */
 
 import axios from 'axios'
 import crypto from 'crypto'
 import fs from 'fs'
 import path from 'path'
-import net from 'net'
+import os from 'os'
+import { spawn } from 'child_process'
+import nodemailer from 'nodemailer'
+import dotenv from 'dotenv'
 
+dotenv.config()
+
+// ---------------- Config ----------------
 const JENGA_SECRET = 'x89Tt3XHT98HadFO2h67Lm8Mlj0fWw'
-const LOG_DIR = path.join(process.cwd(), 'logs')
-const SEND_INTERVAL_MS = 30_000
-const HEALTHCHECK_INTERVAL_MS = 5 * 60_000 // 5 minutes
-const TIMEOUT_MS = 20_000 // 20s per request
+const TEST_INTERVAL_MS = 30_000
+const RETRY_INTERVAL_MS = 3 * 60_000
+const LOG_FLUSH_INTERVAL = 5000
+const RESTART_DELAY_MS = 10_000
+const MEMORY_THRESHOLD_MB = 500
+const LOG_DIR = path.resolve('logs')
 
-if (!fs.existsSync(LOG_DIR)) fs.mkdirSync(LOG_DIR)
+// --- Optional alert settings ---
+const ENABLE_EMAIL = !!process.env.EMAIL_USER
+const ENABLE_TELEGRAM = !!process.env.TELEGRAM_BOT_TOKEN && !!process.env.TELEGRAM_CHAT_ID
 
-/** --- Logging utilities --- */
-function logMessage(type: 'info' | 'error', message: string) {
-  const date = new Date()
-  const dateStr = date.toISOString().split('T')[0]
-  const logFile =
-    type === 'error'
-      ? path.join(LOG_DIR, `ipn-errors-${dateStr}.log`)
-      : path.join(LOG_DIR, `ipn-test-${dateStr}.log`)
+// ---------------- Init ----------------
+if (!fs.existsSync(LOG_DIR)) fs.mkdirSync(LOG_DIR, { recursive: true })
 
-  const line = `[${date.toISOString()}] ${message}\n`
-  fs.appendFileSync(logFile, line)
+function getDateStr() {
+  return new Date().toISOString().slice(0, 10)
+}
+function getLogPath(base: string) {
+  return path.join(LOG_DIR, `${base}-${getDateStr()}.log`)
 }
 
-/** --- Random IPN payload --- */
+// ---------------- Buffered logging ----------------
+let logBuffer: string[] = []
+let errBuffer: string[] = []
+
+function log(message: string) {
+  const line = `[${new Date().toISOString()}] ${message}`
+  console.log(line)
+  logBuffer.push(line)
+}
+
+function logError(message: string) {
+  const line = `[${new Date().toISOString()}] ERROR: ${message}`
+  console.error(line)
+  errBuffer.push(line)
+}
+
+function flushLogs() {
+  try {
+    if (logBuffer.length > 0) {
+      fs.appendFileSync(getLogPath('ipn-test'), logBuffer.join(os.EOL) + os.EOL)
+      logBuffer = []
+    }
+    if (errBuffer.length > 0) {
+      fs.appendFileSync(getLogPath('ipn-errors'), errBuffer.join(os.EOL) + os.EOL)
+      errBuffer = []
+    }
+  } catch (e) {
+    console.error('⚠️ Failed to flush logs:', (e as any).message)
+  }
+}
+setInterval(flushLogs, LOG_FLUSH_INTERVAL)
+
+// ---------------- Alert System ----------------
+async function sendTelegramAlert(message: string) {
+  if (!ENABLE_TELEGRAM) return
+  try {
+    await axios.post(`https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}/sendMessage`, {
+      chat_id: process.env.TELEGRAM_CHAT_ID,
+      text: message,
+    })
+    log(`📨 Telegram alert sent.`)
+  } catch (err: any) {
+    logError(`⚠️ Failed to send Telegram alert: ${err.message}`)
+  }
+}
+
+async function sendEmailAlert(subject: string, text: string) {
+  if (!ENABLE_EMAIL) return
+  try {
+    const transporter = nodemailer.createTransport({
+      service: 'gmail',
+      auth: {
+        user: process.env.EMAIL_USER,
+        pass: process.env.EMAIL_PASS,
+      },
+    })
+    await transporter.sendMail({
+      from: `"IPN Tester" <${process.env.EMAIL_USER}>`,
+      to: process.env.EMAIL_TO || process.env.EMAIL_USER,
+      subject,
+      text,
+    })
+    log(`📧 Email alert sent.`)
+  } catch (err: any) {
+    logError(`⚠️ Failed to send email alert: ${err.message}`)
+  }
+}
+
+async function sendAlert(title: string, msg: string) {
+  await Promise.all([
+    sendTelegramAlert(`⚙️ ${title}\n${msg}`),
+    sendEmailAlert(title, msg),
+  ])
+}
+
+// ---------------- IPN core logic ----------------
 function generatePayload() {
   return {
     callbackType: 'IPN',
@@ -54,129 +135,156 @@ function generatePayload() {
   }
 }
 
-/** --- Check if port 3000 is occupied --- */
-async function isPortBusy(port = 3000): Promise<boolean> {
-  return new Promise((resolve) => {
-    const server = net.createServer()
-    server.once('error', () => resolve(true))
-    server.once('listening', () => {
-      server.close(() => resolve(false))
-    })
-    server.listen(port)
-  })
+async function getAvailableLocalPort(): Promise<number | null> {
+  for (let port = 3000; port <= 3010; port++) {
+    try {
+      const res = await axios.get(`http://localhost:${port}/api/health`, { timeout: 3000 })
+      if (res.status === 200) {
+        log(`✅ Found local server on port ${port}`)
+        return port
+      }
+    } catch {}
+  }
+  return null
 }
 
-/** --- Try fetching ngrok HTTPS URL --- */
-async function getNgrokUrl(): Promise<string> {
+async function getNgrokUrl(): Promise<string | null> {
   try {
     const res = await axios.get<{ tunnels: { public_url: string }[] }>(
       'http://127.0.0.1:4040/api/tunnels',
-      { timeout: TIMEOUT_MS }
+      { timeout: 20000 }
     )
-    const tunnels = res.data.tunnels
-    const httpsTunnel = tunnels.find((t) => t.public_url.startsWith('https://'))
-    if (!httpsTunnel) throw new Error('No active HTTPS ngrok tunnel found.')
+    const httpsTunnel = res.data.tunnels.find(t => t.public_url.startsWith('https://'))
+    if (!httpsTunnel) throw new Error('No HTTPS ngrok tunnel found.')
     return httpsTunnel.public_url
   } catch (err: any) {
-    throw new Error('⚠️ Could not fetch ngrok URL: ' + err.message)
+    logError(`⚠️ Could not fetch ngrok URL: ${err.message}`)
+    return null
   }
 }
 
-/** --- Try to reach localhost, else ngrok --- */
-async function getActiveEndpoint(): Promise<string> {
-  const localUrl = 'http://localhost:3000'
-
-  // if 3000 port busy, skip direct localhost call
-  if (await isPortBusy(3000)) {
-    console.log('⚠️ Port 3000 is busy — trying ngrok instead...')
-    const ngrokUrl = await getNgrokUrl()
-    console.log(`🌍 Using ngrok URL: ${ngrokUrl}`)
-    return ngrokUrl
-  }
-
-  try {
-    await axios.post(`${localUrl}/api/jenga/ipn`, { ping: true }, { timeout: 3000 })
-    console.log(`✅ Local server responding at ${localUrl}`)
-    return localUrl
-  } catch {
-    console.log('⚠️ Localhost not responding, switching to ngrok...')
-    const ngrokUrl = await getNgrokUrl()
-    console.log(`🌍 Using ngrok URL: ${ngrokUrl}`)
-    return ngrokUrl
-  }
-}
-
-/** --- Send one IPN packet --- */
 async function sendIPN(baseUrl: string) {
   const payload = generatePayload()
   const endpoint = `${baseUrl}/api/jenga/ipn`
   const hmac = crypto.createHmac('sha256', JENGA_SECRET).update(JSON.stringify(payload)).digest('hex')
 
-  console.log(`\n🚀 Sending IPN → ${endpoint}`)
-  console.log(`🧾 Reference: ${payload.transaction.reference}`)
-  console.log(`💰 Amount: ${payload.transaction.amount} ${payload.transaction.currency}`)
-
   try {
-    const res = await axios.post(endpoint, payload, {
-      headers: {
-        'Content-Type': 'application/json',
-        'X-Jenga-HMAC': hmac,
-      },
-      timeout: TIMEOUT_MS,
+    log(`🚀 Sending IPN → ${endpoint}`)
+    log(`🧾 Ref: ${payload.transaction.reference}, 💰 ${payload.transaction.amount} ${payload.transaction.currency}`)
+
+    const res = await axios.post<any>(endpoint, payload, {
+      headers: { 'Content-Type': 'application/json', 'X-Jenga-HMAC': hmac },
+      timeout: 10_000,
     })
 
-    const msg = `✅ [${payload.transaction.reference}] ${payload.transaction.amount} ${payload.transaction.currency} → ${res.status}`
-    console.log(msg)
-    logMessage('info', msg)
+    log(`✅ Response: ${JSON.stringify(res.data).slice(0, 500)}`)
   } catch (err: any) {
-    const msg = `❌ [${payload.transaction.reference}] ${err.message || 'Unknown error'}`
-    console.error(msg)
-    logMessage('error', msg)
+    const msg = err.response?.data ? JSON.stringify(err.response.data) : err.message
+    logError(`❌ Error sending IPN: ${msg}`)
   }
 }
 
-/** --- Auto health monitor: recheck localhost/ngrok status every few minutes --- */
-async function monitorHealth(currentBaseUrl: string, setBaseUrl: (url: string) => void) {
-  try {
-    const localUrl = 'http://localhost:3000'
-    // 1️⃣ Try localhost first
-    try {
-      await axios.post(`${localUrl}/api/jenga/ipn`, { ping: true }, { timeout: 2000 })
-      if (currentBaseUrl !== localUrl) {
-        console.log(`🔁 Local server back online → switching to ${localUrl}`)
-        logMessage('info', 'Local server reconnected.')
-        setBaseUrl(localUrl)
-        return
-      }
-    } catch {
-      // not available — try ngrok
-      const ngrokUrl = await getNgrokUrl()
-      if (ngrokUrl !== currentBaseUrl) {
-        console.log(`🔁 Switching to new ngrok URL: ${ngrokUrl}`)
-        logMessage('info', 'Ngrok URL updated: ' + ngrokUrl)
-        setBaseUrl(ngrokUrl)
-      }
-    }
-  } catch (err: any) {
-    console.log('⚠️ Health check failed:', err.message)
-    logMessage('error', 'Health check failed: ' + err.message)
-  }
-}
-
-/** --- Main runner --- */
+// ---------------- Loop ----------------
 async function startLoop() {
-  let baseUrl = await getActiveEndpoint()
-  console.log('🕒 Starting continuous Jenga IPN tests every 30 seconds...\n')
+  let baseUrl: string | null = null
 
-  // Send first one immediately
-  await sendIPN(baseUrl)
-  setInterval(() => sendIPN(baseUrl), SEND_INTERVAL_MS)
+  const detectBaseUrl = async () => {
+    const port = await getAvailableLocalPort()
+    if (port) {
+      baseUrl = `http://localhost:${port}`
+    } else {
+      baseUrl = await getNgrokUrl()
+    }
 
-  // Periodic reconnection & ngrok-refresh
-  setInterval(() => monitorHealth(baseUrl, (newUrl) => (baseUrl = newUrl)), HEALTHCHECK_INTERVAL_MS)
+    if (baseUrl) log(`🌍 Using endpoint: ${baseUrl}`)
+    else logError('❌ No endpoint found. Retrying in 3 min...')
+  }
+
+  await detectBaseUrl()
+  if (!baseUrl) return
+
+  setInterval(async () => {
+    const port = await getAvailableLocalPort()
+    if (port) baseUrl = `http://localhost:${port}`
+    else {
+      const ngrok = await getNgrokUrl()
+      if (ngrok) baseUrl = ngrok
+    }
+  }, RETRY_INTERVAL_MS)
+
+  const sendLoop = async () => {
+    if (!baseUrl) {
+      logError('⚠️ Skipping — no active endpoint.')
+      return
+    }
+    try {
+      await sendIPN(baseUrl)
+    } catch (err: any) {
+      logError(`Send loop error: ${err.message}`)
+    }
+  }
+
+  await sendLoop()
+  setInterval(sendLoop, TEST_INTERVAL_MS)
 }
 
-startLoop().catch((err) => {
-  console.error('❌ Startup error:', err.message)
-  logMessage('error', 'Startup error: ' + err.message)
+// ---------------- Auto-Restart ----------------
+function restartSelf(reason: string) {
+  const msg = `♻️ Restarting due to: ${reason}\nTime: ${new Date().toLocaleString()}`
+  logError(msg)
+  flushLogs()
+  sendAlert('IPN Tester Restart', msg)
+
+  setTimeout(() => {
+    const child = spawn(process.argv[0], process.argv.slice(1), {
+      detached: true,
+      stdio: 'inherit',
+    })
+    child.unref()
+    process.exit(1)
+  }, RESTART_DELAY_MS)
+}
+
+process.on('uncaughtException', (err) => {
+  logError(`💥 Uncaught Exception: ${err.message}`)
+  restartSelf('Uncaught Exception')
 })
+
+process.on('unhandledRejection', (reason: any) => {
+  logError(`💥 Unhandled Rejection: ${reason}`)
+  restartSelf('Unhandled Rejection')
+})
+
+process.on('SIGINT', () => {
+  log('🛑 Graceful shutdown...')
+  flushLogs()
+  process.exit(0)
+})
+
+// Memory watchdog
+setInterval(() => {
+  const used = process.memoryUsage().heapUsed / 1024 / 1024
+  if (used > MEMORY_THRESHOLD_MB) {
+    const msg = `💣 Memory usage exceeded ${MEMORY_THRESHOLD_MB}MB (${used.toFixed(1)} MB). Restarting...`
+    logError(msg)
+    restartSelf('Memory threshold exceeded')
+  }
+}, 10_000)
+
+// Daily auto-restart
+function scheduleMidnightRestart() {
+  const now = new Date()
+  const nextMidnight = new Date(now)
+  nextMidnight.setHours(24, 0, 0, 0)
+  const msUntilMidnight = nextMidnight.getTime() - now.getTime()
+
+  log(`🕛 Scheduled next daily restart in ${(msUntilMidnight / 1000 / 60).toFixed(1)} minutes.`)
+
+  setTimeout(() => {
+    restartSelf('Scheduled daily midnight restart')
+  }, msUntilMidnight)
+}
+scheduleMidnightRestart()
+
+// ---------------- Run ----------------
+startLoop().catch(err => restartSelf(`Startup Error: ${err.message}`))

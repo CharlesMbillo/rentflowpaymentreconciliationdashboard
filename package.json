@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
+    "type": "module",
     "build": "next build",
     "dev": "next dev",
     "lint": "next lint",
@@ -58,6 +59,7 @@
     "lucide-react": "^0.454.0",
     "next": "15.2.4",
     "next-themes": "^0.2.0",
+    "nodemailer": "^7.0.10",
     "pino": "^10.1.0",
     "pino-pretty": "^13.1.2",
     "react": "^18.3.1",
@@ -78,6 +80,7 @@
     "@types/axios": "^0.9.36",
     "@types/jest": "^29.5.14",
     "@types/node": "^22.18.12",
+    "@types/nodemailer": "^7.0.3",
     "@types/react": "^18.3.5",
     "@types/react-dom": "^18.3.0",
     "@types/ws": "^8.18.1",
