@@ -1,0 +1,60 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DATABASE_URL_UNPOOLED")
+}
+
+model Payment {
+  id                  String   @id @default(cuid())
+  transactionReference String  @unique
+  transactionDate     DateTime
+  amount              Decimal
+  currency            String
+  accountNumber       String
+  status             String
+  paymentMode        String
+  narration          String?
+  phoneNumber        String?
+  merchantCode       String
+  serviceCharge      Decimal? @default(0)
+  orderAmount        Decimal?
+  orderCurrency      String?
+  additionalInfo     String?
+  
+  // Relations
+  lease              Lease?   @relation(fields: [leaseId], references: [id])
+  leaseId            Int?
+  tenant             Tenant?  @relation(fields: [tenantId], references: [id])
+  tenantId           Int?
+
+  // Metadata
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+  reconciled         Boolean  @default(false)
+  reconciledAt       DateTime?
+  reconciliationNotes String?
+
+  // Indexes
+  @@index([status])
+  @@index([transactionDate])
+  @@index([accountNumber])
+  @@index([leaseId])
+  @@index([tenantId])
+}
+
+// Keeping these as placeholders since they're referenced in the Payment model
+model Lease {
+  id        Int       @id @default(autoincrement())
+  payments  Payment[]
+  // Other fields...
+}
+
+model Tenant {
+  id        Int       @id @default(autoincrement())
+  payments  Payment[]
+  // Other fields...
+}

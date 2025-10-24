@@ -1,0 +1,18 @@
+Smart RentRoll Dashboard with Jenga PGW-IPN Integration
+=========================================================
+
+Build a full-stack React + Vite + NestJS + TypeScript application that reconciles rent payments in real time using Jenga PGW Instant Payment Notification (IPN).
+Includes color-coded room matrix, tenant onboarding, RBAC, and offline mode.
+Multi-Property Management:
+Block A ROOM no 1 to 224 (28 Rooms per floor) 
+Block B ROOM no 1 to 231 (28 Rooms per floor) last flr 8th has 7rooms
+Block C ROOM no 1 to 224 ( 28 Rooms per floor)
+Block D ROOM no 1 to 358 (42 Rooms per floor) last flr 8th has 8 rooms
+Block E ROOM no 1 to 350 (42 Rooms per floor) last flr 8th has 9 rooms 
+Block F ROOM no 1 to 234 (28 Rooms per floor) last flr 8th has
+Block G ROOM no 1 to 234 (28 Rooms per floor) last flr 8th has 8rooms
+Block H ROOM no 1 to 74 (9 Rooms per floor)
+
+Deployable on Vercel
+
+Refer to README.md for detailed requirements.

@@ -1,0 +1,30 @@
+generator client {
+  provider = "prisma-client-js"
+}
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+model Payment {
+  id                   Int       @id @default(autoincrement())
+  orderReference       String?   @db.VarChar(255)
+  paymentReference     String?   @db.VarChar(255)
+  transactionReference String?   @unique
+  amount               Decimal   @default(0)
+  currency             String?   @db.VarChar(10)
+  status               String    @default("PENDING")
+  paymentMode          String?   @db.VarChar(50)
+  remarks              String?
+  paidAt               DateTime?
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
+}
+model IpnLog {
+  id                Int       @id @default(autoincrement())
+  source            String    @db.VarChar(64)
+  rawPayload        String
+  processed         Boolean   @default(false)
+  processingResult  Json?
+  createdAt         DateTime  @default(now())
+  processedAt       DateTime?
+}
