@@ -1,0 +1,22 @@
+{
+  "merchantCode": "MERCHANT_XXXX",
+  "transactionReference": "TXN-{{RANDOM_ID}}",
+  "amount": 4500.00,
+  "currency": "KES",
+  "paymentChannel": "PDQ",
+  "narration": "Room 101 rent payment",
+  "billNumber": "ROOM-101",
+  "extraData": {
+    "room": "101",
+    "month": "Oct-2025",
+    "tenant": "John Doe"
+  },
+  "callbackUrl": "https://yourdomain.com/api/ipn",
+  "successRedirectUrl": "https://yourdomain.com/payment-success",
+  "failRedirectUrl": "https://yourdomain.com/payment-fail",
+  "customer": {
+    "name": "John Doe",
+    "email": "john.doe@example.com",
+    "mobileNumber": "254712345678"
+  }
+}

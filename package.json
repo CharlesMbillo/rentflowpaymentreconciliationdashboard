@@ -6,6 +6,8 @@
     "type": "module",
     "build": "next build",
     "dev": "next dev",
+    "dev:server": "ts-node server.ts",
+    "test:checkout": "npx ts-node test/test-jenga-checkout.ts",
     "lint": "next lint",
     "start": "next start",
     "test": "jest",
